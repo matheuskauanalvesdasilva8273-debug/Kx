@@ -135,3 +135,125 @@ class OverlayService : Service() {
         })
         return col(tv, sb)
     }
+    private fun aimTab() = col(
+        pair(check("Ativar Aimbot", "aim"), check("Aim Lock", "lock")),
+        pair(check("Exibir FOV", "fov", true), check("Exibir Linha", "line")),
+        slider("Regular FOV", "fovsize", 360, 120),
+        slider("Suavidade", "smooth", 100, 35),
+        label("Alvo:"), segment("target", listOf("Cabeça", "Pescoço", "Corpo"), 0),
+        label("Tipo de Aimbot:"), segment("mode", listOf("Ao Atirar", "Ao Olhar"), 0)
+    )
+
+    private fun espTab() = col(
+        pair(check("Ativar ESP", "esp"), check("Esconder Painel", "hide")),
+        check("ESP Linha", "esp_line"), check("ESP Caixa", "esp_box"),
+        check("ESP Esqueleto", "esp_skel"), check("ESP Nome", "esp_name"), check("ESP Vida", "esp_hp")
+    )
+
+    private fun extraTab(): View {
+        val save = button("Salvar Config") { copyPrefs("kx", "kx_saved") }
+        val load = button("Carregar Config") { copyPrefs("kx_saved", "kx"); show(current) }
+        val close = button("Fechar painel") { stopSelf() }
+        return col(
+            check("Modo desempenho", "perf"),
+            pair(save, load).apply { setPadding(0, dp(8), 0, 0) },
+            close.apply { layoutParams = LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) } }
+        )
+    }
+
+    private fun infoTab() = TextView(this).apply {
+        text = "KX EXTERNAL v1.0\n\nPainel flutuante independente. Não lê memória nem altera arquivos de nenhum jogo. As opções são apenas interface; o estado fica salvo neste aparelho."
+        setTextColor(white); textSize = 14f
+    }
+
+    private fun copyPrefs(from: String, to: String) {
+        val src = getSharedPreferences(from, MODE_PRIVATE).all
+        getSharedPreferences(to, MODE_PRIVATE).edit().apply {
+            clear()
+            src.forEach { (k, v) -> when (v) { is Boolean -> putBoolean(k, v); is Int -> putInt(k, v) } }
+        }.apply()
+    }
+
+    private fun show(i: Int) {
+        current = i
+        content.removeAllViews()
+        content.addView(when (i) { 0 -> aimTab(); 1 -> espTab(); 2 -> extraTab(); else -> infoTab() })
+    }
+
+    private fun addFov() {
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(2).toFloat(); color = red }
+        val v = object : View(this@OverlayService) {
+            override fun onDraw(c: Canvas) {
+                if (prefs.getBoolean("fov", true)) c.drawCircle(width / 2f, height / 2f, dp(prefs.getInt("fovsize", 120)).toFloat(), paint)
+            }
+        }
+        val p = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        wm.addView(v, p)
+        fovView = v
+        val h = Handler(Looper.getMainLooper())
+        h.post(object : Runnable { override fun run() { if (fovView != null) { v.invalidate(); h.postDelayed(this, 150) } } })
+    }
+
+    private fun buildPanel() {
+        wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val w = minOf(dp(340), (resources.displayMetrics.widthPixels * 0.94f).toInt())
+        lp = WindowManager.LayoutParams(
+            w, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; x = dp(8); y = dp(48) }
+
+        val arrow = TextView(this).apply { text = "▼"; setTextColor(white); textSize = 16f; setPadding(dp(14), dp(11), dp(14), dp(11)) }
+        val closeX = TextView(this).apply { text = "✕"; setTextColor(white); textSize = 18f; setPadding(dp(14), dp(10), dp(14), dp(10)) }
+        val title = TextView(this).apply { text = "KX EXTERNAL"; setTextColor(white); textSize = 16f; gravity = Gravity.CENTER }
+        val r = dp(12).toFloat()
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply { setColor(red); cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f) }
+            addView(arrow); addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); addView(closeX)
+        }
+
+        content = FrameLayout(this).apply { setPadding(dp(10), dp(8), dp(10), dp(4)) }
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(12))
+            listOf("⌖", "◉", "⚙", "ⓘ").forEachIndexed { i, g ->
+                val b = button(g) { show(i) }.apply { textSize = 20f }
+                addView(b, LinearLayout.LayoutParams(dp(46), dp(46)).apply { setMargins(dp(5), 0, dp(5), 0) })
+            }
+        }
+        val body = col(content, nav)
+        show(0)
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; background = shape(bg, 12, 0xFF2A2A2A.toInt())
+            addView(header); addView(body)
+        }
+
+        arrow.setOnClickListener {
+            val open = body.visibility == View.VISIBLE
+            body.visibility = if (open) View.GONE else View.VISIBLE
+            arrow.text = if (open) "▶" else "▼"
+        }
+        closeX.setOnClickListener { stopSelf() }
+        var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
+        header.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = lp.x; oy = lp.y }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = (ox + e.rawX - sx).toInt(); lp.y = (oy + e.rawY - sy).toInt()
+                    wm.updateViewLayout(panel, lp)
+                }
+            }
+            true
+        }
+        root = panel
+        addFov()
+        wm.addView(panel, lp)
+    }
+}
